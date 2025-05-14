@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "TotalPorter": {
+      "commandName": "Project",
+      "commandLineArgs": "cfc \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\LikeADragonGaiden\\runtime\\media\\data\" \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\LikeADragon8\\runtime\\media\\mods\\Like A Brawler 8\" gaiden y8 \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\LikeADragonGaiden\\runtime\\media\\data\\battle\\Fighter Command (Like a Dragon Gaiden)\\Extracted\\p_player_wpg.json\" \"C:\\Program Files (x86)\\Steam\\steamapps\\common\\LikeADragon8\\runtime\\media\\mods\\Like A Brawler 8\""
+    }
+  }
+}

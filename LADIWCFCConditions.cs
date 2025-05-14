@@ -1,0 +1,71 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace TotalPorter
+{
+    public enum LADIWCFCConditions : int
+    {
+        invalid = 0,
+        ButtonPush = 1,
+        ButtonNow = 2,
+        ButtonRenda = 3,
+        ButtonCommand = 4,
+        MotionShift = 5,
+        MotionEnd = 6,
+        FighterStatus = 7,
+        TargetStatus = 8,
+        TargetChange = 9,
+        Custom = 10,
+        AttackHit = 11,
+        Outer = 12,
+        Lever = 13,
+        Weapon = 14,
+        WeaponID = 15,
+        HaveItem = 16,
+        HAct = 17,
+        HActNotUsed = 18,
+        DistLimit = 19,
+        AngLimit = 20,
+        Range = 21,
+        Height = 22,
+        LeverAng = 23,
+        Tame = 24,
+        ChangeAuth = 25,
+        DirParam = 26,
+        Skill = 27,
+        CtrlType = 28,
+        PlayerID = 29,
+        AttackFrame = 30,
+        Pickup = 31,
+        ComboNum = 32,
+        SyncRole = 33,
+        ComboSpeed = 34,
+        BattleStyle = 35,
+        HeatLevel = 36,
+        HeightParam = 37,
+        MotionID = 38,
+        Stun = 39,
+        PushFighter = 40,
+        RangeID = 41,
+        ChargeTime = 42,
+        ChargeLevel = 43,
+        ChargeType = 44,
+        PlayerSkill = 45,
+        ReactionType = 46,
+        ItemBuff = 47,
+        DistArea = 48,
+        SkillSuccess = 49,
+        SkillFailed = 50,
+        SyncNode = 51,
+        WallHit = 52,
+        AiCustomEventFlag = 53,
+        AiOpenActionFlag = 54,
+        Debug = 55,
+        LCASuccess = 56,
+        SpeedBuff = 57,
+        HeightScale = 58
+    }
+}
