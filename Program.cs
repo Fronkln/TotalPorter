@@ -16,17 +16,12 @@ namespace TotalPorter
 {
     internal class Program
     {
-        public static bool Recurse = false;
-        public static bool ConvertMoves = true;
-        public static bool ConvertHAct = false;
-        public static bool ConvertHActFiles = false;
-        public static bool ConvertPib = false;
-        public static bool ConvertSound = false;
         static HashSet<string> convertedSets = new HashSet<string>();
         static Dictionary<string, int> convertedSetsMap = new Dictionary<string, int>();
         static List<string> convertedAnims = new List<string>();
         static HashSet<string> convertedPibs = new HashSet<string>();
         static HashSet<string> convertedHActs = new HashSet<string>();
+        static Dictionary<uint, uint> convertedSounds = new Dictionary<uint, uint>();
         static Dictionary<string, uint> pibVals = new Dictionary<string, uint>();
         static List<string> hactsToConvert = new List<string>();
 
@@ -35,7 +30,15 @@ namespace TotalPorter
             if (args.Length <= 0)
                 return;
 
-            string mode = args[0];
+            IniSettings.CreateIfNotPresent();
+            IniSettings.Read();
+
+            string mode;
+
+            if (args.Length > 1)
+                mode = args[0];
+            else
+                mode = IniSettings.Mode;
 
             switch (mode)
             {
@@ -51,12 +54,53 @@ namespace TotalPorter
                     break;
 
                 case "cfc":
-                    string inputDir = args[1];
-                    string targetDir = args[2];
-                    string inputGameS = args[3];
-                    string outputGameS = args[4];
-                    string inputFile = args[5];
-                    string outputDir = args[6];
+                    string inputDir;
+                    string targetDir;
+                    string inputGameS;
+                    string outputGameS;
+                    string inputFile;
+                    string outputDir;
+
+                    if (args.Length > 1)
+                    {
+                        inputDir = args[1];
+                        targetDir = args[2];
+                        inputGameS = args[3];
+                        outputGameS = args[4];
+                        inputFile = args[5];
+                        outputDir = args[6];
+                    }
+                    else
+                    {
+                        inputDir = IniSettings.InputDir;
+                        targetDir = IniSettings.TargetDir;
+                        inputGameS = IniSettings.InputGame;
+                        outputGameS = IniSettings.OutputGame;
+                        inputFile = args[0];
+                        outputDir = IniSettings.OutputDir;
+                    }
+
+
+                    if (string.IsNullOrEmpty(inputDir))
+                    {
+                        Console.WriteLine("Input directory is empty.");
+                        Console.ReadKey();
+
+                    }
+
+                    if (string.IsNullOrEmpty(targetDir))
+                    {
+                        Console.WriteLine("Target directory is empty.");
+                        Console.ReadKey();
+                    }
+
+                    if (string.IsNullOrEmpty(outputDir))
+                    {
+                        Console.WriteLine("Output directory is empty.");
+                        Console.ReadKey();
+                    }
+
+
                     bool removeSkillCond = args.Contains("-noskillcondition");
                     bool removeStyleCond = args.Contains("-nostylecondition");
                     bool removePlayerCond = args.Contains("-noplayercondition");
@@ -64,12 +108,19 @@ namespace TotalPorter
                     Game inputGame = CMN.GetGameFromString(inputGameS);
                     Game outputGame = CMN.GetGameFromString(outputGameS);
 
+                    if(CMN.IsDEGame(inputGame) && CMN.IsOEGame(outputGame))
+                    {
+                        DEToOECFC.Convert(inputDir, inputFile, targetDir, outputDir, inputGame, outputGame, removeSkillCond);
+                        break;
+                    }
+
                     if(CMN.IsOEGame(inputGame) && CMN.IsDEGame(outputGame))
                     {
                         OEToDECFC.Convert(inputDir, inputFile, targetDir, outputDir, inputGame, outputGame, removeSkillCond, removeStyleCond, removePlayerCond);
                         break;
                     }
 
+                    //DE to DE code below
 
                     DirectoryInfo[] inputDirs = new DirectoryInfo(inputDir).GetDirectories();
                     DirectoryInfo[] targetDirs = new DirectoryInfo(targetDir).GetDirectories();
@@ -79,13 +130,22 @@ namespace TotalPorter
 
                     DirectoryInfo originalDbFolder = dbFolder;
 
+                    if(originalDbFolder == null)
+                    {
+                        Console.WriteLine("Input DB folder does not exist.");
+                        Console.ReadKey();
+                    }
+
                     DirectoryInfo targetDbFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("db"));
                     DirectoryInfo targetPuidFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("puid"));
 
-                    string outputPuidDir = Path.Combine(outputDir, "puid");
+                    DirectoryInfo outputPuidDir = new DirectoryInfo(Path.Combine(outputDir, "puid"));
 
                     if (targetPuidFolder.Exists)
-                        outputPuidDir = Path.Combine(outputDir, targetPuidFolder.Name);
+                        outputPuidDir = new DirectoryInfo(Utils.ClearUnpackedPath(Path.Combine(outputDir, targetPuidFolder.Name)));
+
+                    if (!outputPuidDir.Exists)
+                        outputPuidDir.Create();
 
                     PortCFC(inputDir, targetDir, inputGameS, outputGameS, inputFile, outputDir, true, args.Contains("-noskillcondition"), args.Contains("-nostylecondition"), args.Contains("-noplayercondition"));
 
@@ -94,16 +154,16 @@ namespace TotalPorter
 
                     if (targetDbFolder.Exists)
                     {
-                        outputDbFolder = new DirectoryInfo(Path.Combine(outputDir, targetDbFolder.Name));
+                        outputDbFolder = new DirectoryInfo(Utils.ClearUnpackedPath(Path.Combine(outputDir, targetDbFolder.Name)));
                     }
                     else
                         outputDbFolder = new DirectoryInfo(Path.Combine(outputDir, "db"));
 
-                    if (ConvertMoves)
+                    if (IniSettings.ConvertMoves)
                     {
                         Console.WriteLine("Adding commandsets to DB and PUID");
 
-                        if (targetPuidFolder.Exists && new DirectoryInfo(outputPuidDir).Exists)
+                        if (targetPuidFolder.Exists && outputPuidDir.Exists)
                         {
                             FileInfo targetCommandsetPUID = new FileInfo(Path.Combine(targetPuidFolder.FullName, "battle_command_set.bin"));
 
@@ -115,11 +175,14 @@ namespace TotalPorter
                                 {
                                     string name = Path.GetFileNameWithoutExtension(kv);
 
-                                    targetCommandSetPuidFile.MainTable.AddEntry(name);
-                                    Console.WriteLine("Added " + name + " to PUID");
+                                    if(!targetCommandSetPuidFile.GetMainTable().TryGetEntry(name, out var table))
+                                    {
+                                        targetCommandSetPuidFile.GetMainTable().AddEntry(name);
+                                        Console.WriteLine("Added " + name + " to PUID");
+                                    }
                                 }
 
-                                ArmpFileWriter.WriteARMPToFile(targetCommandSetPuidFile, Path.Combine(outputPuidDir, "battle_command_set.bin"));
+                                ArmpFileWriter.WriteARMPToFile(targetCommandSetPuidFile, Path.Combine(outputPuidDir.FullName, "battle_command_set.bin"));
                             }
                             else
                             {
@@ -151,7 +214,7 @@ namespace TotalPorter
                                             /*
                                             ArmpEntry inputSubtableEntry = null;
 
-                                            if(!inputCommandsetFile.MainTable.SubTable.TryGetEntry(kv.Value, out inputSubtableEntry))
+                                            if(!inputCommandsetFile.GetMainTable().Indexer.TryGetEntry(kv.Value, out inputSubtableEntry))
                                             {
                                                 Console.WriteLine("Couldn't find " + kv.Value + " on the DB subtable. Skipping");
                                                 continue;
@@ -160,12 +223,12 @@ namespace TotalPorter
 
                                             ArmpEntry targetSubtableEntry = null;
 
-                                            if (!targetCommandsetFile.MainTable.SubTable.TryGetEntry(kv.Key, out targetSubtableEntry))
+                                            if (!targetCommandsetFile.GetMainTable().Indexer.TryGetEntry(kv.Key, out targetSubtableEntry))
                                             {
-                                                targetSubtableEntry = targetCommandsetFile.MainTable.SubTable.AddEntry(kv.Key);
+                                                targetSubtableEntry = targetCommandsetFile.GetMainTable().Indexer.AddEntry(kv.Key);
                                                 targetSubtableEntry.SetValueFromColumn("0", (int)kv.Value);
 
-                                                ArmpEntry targetMainTableEntry = targetCommandsetFile.MainTable.AddEntry();
+                                                ArmpEntry targetMainTableEntry = targetCommandsetFile.GetMainTable().AddEntry();
                                                 targetSubtableEntry.SetValueFromColumn("2", targetMainTableEntry.ID);
                                             }
                                         }
@@ -189,32 +252,37 @@ namespace TotalPorter
                         }
                     }
 
-                    DirectoryInfo outputBattleDirectory = new DirectoryInfo(outputDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("battle"));
 
-                    string outputBattleDir = "";
+                    DirectoryInfo inputBattleDir = inputDirs.FirstOrDefault(x => x.Name.StartsWith("fighter"));
+                    DirectoryInfo targetBattleDir = new DirectoryInfo(targetDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("battle"));
+                    DirectoryInfo targetCfcFolder = new DirectoryInfo(targetBattleDir.FullName).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("Fighter Command") || x.Name == "cfc");
+                    DirectoryInfo outputBattleDir = new DirectoryInfo(Path.Combine(outputDir, "battle"));
+                    DirectoryInfo outputCfcDir = new DirectoryInfo(Path.Combine(outputBattleDir.FullName, targetCfcFolder.Name));
 
-                    if (outputBattleDirectory != null)
-                        outputBattleDir = outputBattleDirectory.FullName;
-                    else
-                        outputBattleDir = Path.Combine(outputDir, "battle");
 
+                    if (targetCfcFolder == null)
+                    {
+                        Console.WriteLine("Unpacked Fighter command not found on target dir.");
+                        return;
+                    }
 
                     string outputCfcPath = null;
 
-                    if (Directory.Exists(outputBattleDir))
-                    {
-                        DirectoryInfo cfcFolder = new DirectoryInfo(outputBattleDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("Fighter Command") || x.Name == "cfc");
+                    if (!outputBattleDir.Exists)
+                        outputBattleDir.Create();
 
-                        string cfcInfPath = Path.Combine(cfcFolder.FullName, "File Information.json");
+                    if (!outputCfcDir.Exists)
+                        outputCfcDir.Create();
 
-                        JObject fileInf = JObject.Parse(File.ReadAllText(cfcInfPath));
-                        JObject sets = (JObject)fileInf["File Specific Info"]["Set Order"];
+                    string cfcInfPath = Path.Combine(targetCfcFolder.FullName, "File Information.json");
+                    string outCfcInfPath = Path.Combine(outputCfcDir.FullName, "File Information.json");
 
-                        outputCfcPath = Path.Combine(cfcFolder.FullName, fileInf["Files Directory"].ToString());
-                    }
+                    JObject fileInf = JObject.Parse(File.ReadAllText(cfcInfPath));
+                    JObject sets = (JObject)fileInf["File Specific Info"]["Set Order"];
 
+                    outputCfcPath = Path.Combine(outputCfcDir.FullName, fileInf["Files Directory"].ToString());
 
-                    if (ConvertHAct)
+                    if (IniSettings.ConvertHAct)
                     {
                         if (inputGame > Game.Y6)
                         {
@@ -239,7 +307,7 @@ namespace TotalPorter
                                         else
                                             outputHActDir = new DirectoryInfo(Path.Combine(outputDir, outputHActDir.Name));
 
-                                        var map = ConvertHActs(hactsToConvert.Distinct().ToArray(), outputBattleDirectory, talkParam, talk2Param, inputHactsDir, outputDir, outputHActDir, inputGame, outputGame, removeSkillCond, removeStyleCond, removePlayerCond);
+                                        var map = ConvertHActs(hactsToConvert.Distinct().ToArray(), outputBattleDir, talkParam, talk2Param, inputHactsDir, outputDir, outputHActDir, inputGame, outputGame, removeSkillCond, removeStyleCond, removePlayerCond);
 
                                         if(map is Dictionary<uint, uint>)
                                         {
@@ -289,17 +357,17 @@ namespace TotalPorter
                     }
 
 
-                    if (inputGame > Game.Y6 && ConvertPib)
+                    if (inputGame > Game.Y6 && IniSettings.ConvertPib)
                     {
                         if (inputParticlePuid != null && inputParticleFolder != null)
-                            ConvertPibs(inputParticleFolder, outputDir, outputPuidDir, targetParticlePuid, inputGame, outputGame);
+                            ConvertPibs(inputParticleFolder, outputDir, outputPuidDir.FullName, targetParticlePuid, inputGame, outputGame);
                         else
                         {
                             Console.WriteLine("Input Particle PUID or foldern not found, will not be converting particles");
                         }
                     }
 
-                    if (ConvertSound)
+                    if (IniSettings.ConvertSound)
                     {
                         DirectoryInfo inputSoundFolder = inputDirs.FirstOrDefault(x => x.Name.StartsWith("sound"));
                         DirectoryInfo targetSoundFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("sound"));
@@ -351,6 +419,8 @@ namespace TotalPorter
                     return PibVersion.Gaiden;
                 case Game.LADIW:
                     return PibVersion.LJ;
+                case Game.YK3:
+                    return PibVersion.YK3;
             }
         }
 
@@ -362,6 +432,8 @@ namespace TotalPorter
 
             if (convertedSets.Contains(new FileInfo(inputFile).Name))
                 return;
+
+            convertedSets.Add(new FileInfo(inputFile).Name);
 
             Console.WriteLine("---Porting---" + new FileInfo(inputFile).Name);
 
@@ -461,7 +533,7 @@ namespace TotalPorter
                         targetParticlePuid = ArmpFileReader.ReadARMP(Path.Combine(targetPuidFolder.FullName, "particle.bin"));
                 }
 
-                if (ConvertMoves)
+                if (IniSettings.ConvertMoves)
                 {
                     foreach (CFCAsset cfcFile in cfcFiles)
                     {
@@ -471,13 +543,21 @@ namespace TotalPorter
                         if (File.Exists(inputBepPath))
                         {
                             cfcFile.File.CopyTo(targetPath, true);
-                            BEP bep = BEP.Read(inputBepPath, inputGame);
+                            try
+                            {
+                                BEP bep = BEP.Read(inputBepPath, inputGame);
 
-                            string outPath = Path.Combine(outputBepPath, Path.GetFileName(inputBepPath));
-                            BEP.Write(bep, outPath, outputGame);
-                            convertedAnims.Add(outPath);
+                                string outPath = Path.Combine(outputBepPath, Path.GetFileName(inputBepPath));
+                                BEP.Write(bep, outPath, outputGame);
 
-                            Console.WriteLine("Converted BEP and copied animation file for " + new FileInfo(outPath).Name);
+                                convertedAnims.Add(outPath);
+
+                                Console.WriteLine("Converted BEP and copied animation file for " + new FileInfo(outPath).Name);
+                            }
+                            catch(Exception ex)
+                            {
+                                Console.WriteLine("ERROR CONVERTING BEP " + Path.GetFileName(inputBepPath) + "\n" + ex.ToString());   
+                            }
                         }
                     }
 
@@ -487,7 +567,7 @@ namespace TotalPorter
                         {
                             string fileName = Path.GetFileNameWithoutExtension(inf.File.FullName);
                             string lowerName = fileName.ToLowerInvariant();
-                            ArmpEntry entry = motionGmtPuid.MainTable.GetAllEntries().Where(x => x.Name.ToLowerInvariant() == lowerName).FirstOrDefault();
+                            ArmpEntry entry = motionGmtPuid.GetMainTable().GetAllEntries().Where(x => x.Name.ToLowerInvariant() == lowerName).FirstOrDefault();
 
                             if (entry != null)
                             {
@@ -496,12 +576,12 @@ namespace TotalPorter
                             }
                             else
                             {
-                                ArmpEntry newEntry = motionGmtPuid.MainTable.AddEntry(inf.AssetName);
+                                ArmpEntry newEntry = motionGmtPuid.GetMainTable().AddEntry(inf.AssetName);
                                 string bepName = Path.Combine(outputBepPath, fileName + ".bep");
 
                                 if (File.Exists(bepName))
                                 {
-                                    ArmpEntry newEntry2 = motionBepPuid.MainTable.AddEntry(inf.AssetName);
+                                    ArmpEntry newEntry2 = motionBepPuid.GetMainTable().AddEntry(inf.AssetName);
                                 }
                             }
                         }
@@ -526,9 +606,11 @@ namespace TotalPorter
 
 
 
-                if (Recurse)
+                if (IniSettings.Recurse)
                     foreach (string dependency in CFC.ParseDependingCFCs(inputFile))
+                    {
                         PortCFC(inputDir, targetDir, inputGameS, outputGameS, Path.Combine(new FileInfo(inputFile).Directory.FullName, dependency), outputDir, false, removeSkillCond, removeStyleCond, removePlayerCond);
+                    }
 
 
                 DirectoryInfo outputBattleDirectory = new DirectoryInfo(outputDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("battle"));
@@ -540,6 +622,8 @@ namespace TotalPorter
                 else
                     outputBattleDir = Path.Combine(outputDir, "battle");
 
+                if (!Directory.Exists(outputBattleDir))
+                    Directory.CreateDirectory(outputBattleDir);
 
                 string outputCfcDir = Path.Combine(outputBattleDir, "cfc");
                 string outputCfcPath = null;
@@ -587,6 +671,8 @@ namespace TotalPorter
                                 sets.Add(name, highest);
                                 addedSets[highest] = name;
                                 convertedSetsMap[name] = highest;
+
+                                Console.WriteLine("Added " + name + " to CFC File Information");
                             }
                         }
 
@@ -608,10 +694,14 @@ namespace TotalPorter
                     outputCfcPath = Path.Combine(outputCfcDir, Path.GetFileName(inputFile));
 
                     File.Copy(inputFile, outputCfcPath, true);
+                    Console.WriteLine("Moved " + new FileInfo(inputFile) + " to " + outputCfcPath);
 
-                    if (inputGame == Game.LADIW || outputGame == Game.LADIW)
+                    if (inputGame >= Game.LADIW || outputGame >= Game.LADIW)
                         if (inputGame != outputGame)
-                            CFC.AdjustCFCIDs(outputCfcPath, outputGame == Game.LADIW);
+                        {
+                            CFC.AdjustCFC(outputCfcPath);
+                            CFC.AdjustCFCIDs(outputCfcPath, inputGame, outputGame);
+                        }
 
                     CFC.RemoveConditions(outputCfcPath, removeStyleCond, removeSkillCond, removePlayerCond);
                 }
@@ -621,7 +711,7 @@ namespace TotalPorter
 
         private static object ConvertHActs(string[] hactsList, DirectoryInfo outBattleDir, ARMP inputTalkParam, ARMP outputTalkParam, DirectoryInfo inputHactsDir, string outputDir, DirectoryInfo outputHActDir, Game inputGame, Game outputGame, bool removeSkillCondition, bool removeStyleCondition, bool removePlayerCondition)
         {
-            if (!ConvertHAct)
+            if (!IniSettings.ConvertHAct)
                 return null;
 
             if (inputHactsDir == null)
@@ -649,14 +739,14 @@ namespace TotalPorter
                 hactNames = hactsList;
 
                 for (int i = 0; i < hactsList.Length; i++)
-                    origHActIds[i] = inputTalkParam.MainTable.GetEntry(hactNames[i]).ID;
+                    origHActIds[i] = inputTalkParam.GetMainTable().GetEntry(hactNames[i]).ID;
             }
             else
             {
                 for (int i = 0; i < hactsList.Length; i++)
                 {
                     origHActIds[i] = uint.Parse(hactsList[i]);
-                    hactNames[i] = inputTalkParam.MainTable.GetEntry(origHActIds[i]).Name;
+                    hactNames[i] = inputTalkParam.GetMainTable().GetEntry(origHActIds[i]).Name;
                 }
             }
 
@@ -669,7 +759,7 @@ namespace TotalPorter
                     string hact = hactNames[i];
 
                     ArmpEntry entry = null;
-                    if (outputTalkParam.MainTable.TryGetEntry(hact, out entry))
+                    if (outputTalkParam.GetMainTable().TryGetEntry(hact, out entry))
                     {
                         if (!entry.IsValid)
                         {
@@ -680,12 +770,14 @@ namespace TotalPorter
                     }
                     else
                     {
-                        ArmpEntry template = outputTalkParam.MainTable.GetEntry(1);
+                        ArmpEntry template = outputTalkParam.GetMainTable().GetEntry(1);
 
-                        string path = template.GetValueFromColumn("path").ToString().Replace(template.Name, "");
-                        entry = outputTalkParam.MainTable.AddEntry(hact);
+                        string path = template.GetValueFromColumn("path").ToString().Replace(template.Name, "").Replace("talk_", "hact_").Replace("test/", "") + hact;
 
-                        if (outputTalkParam.MainTable.IsColumnValid("type"))
+                        entry = outputTalkParam.GetMainTable().AddEntry(hact);
+                        entry.SetValueFromColumn("path", path);
+
+                        if (outputTalkParam.GetMainTable().IsColumnValid("type"))
                             entry.SetValueFromColumn("type", 9);
 
                         hactIds[origHActIds[i]] = entry.ID;
@@ -737,6 +829,8 @@ namespace TotalPorter
                                     string outputPath = Path.Combine(outputCHPDir.FullName, "Extracted", kv.Value + ".json");
                                     chpFile.CopyTo(outputPath, true);
                                     CFC.RemoveConditions(outputPath, removeStyleCondition, removeSkillCondition, removePlayerCondition);
+                                    CFC.AdjustCFCIDs(outputPath, inputGame, outputGame);
+
 
                                     Console.WriteLine("Copied CHP HACt ID " + kv.Key + $"(now " + kv.Value + ")");
 
@@ -749,6 +843,8 @@ namespace TotalPorter
                         }
                     }
                 }
+
+                ConvertHActs(inputHactsDir, outputHActDir, inputGame, outputGame, hactNames);
             }
             else if (inputUsesNumbers && !outputUsesNumbers)
             {
@@ -759,7 +855,7 @@ namespace TotalPorter
                     string hact = hactNames[i];
 
                     ArmpEntry entry = null;
-                    if (outputTalkParam.MainTable.TryGetEntry(hact, out entry))
+                    if (outputTalkParam.GetMainTable().TryGetEntry(hact, out entry))
                     {
                         if (!entry.IsValid)
                         {
@@ -770,7 +866,7 @@ namespace TotalPorter
                     }
                     else
                     {
-                        ArmpEntry template = outputTalkParam.MainTable.GetEntry(1);
+                        ArmpEntry template = outputTalkParam.GetMainTable().GetEntry(1);
                         string path = template.GetValueFromColumn("path").ToString().Replace(template.Name, "").Replace("talk_", "hact_").Replace("test/", "") + hact;
 
                         string name = hact;
@@ -779,7 +875,7 @@ namespace TotalPorter
                         if (outputGame == Game.YK2)
                             name = "l2_" + name;
 
-                        entry = outputTalkParam.MainTable.AddEntry(name);
+                        entry = outputTalkParam.GetMainTable().AddEntry(name);
                         entry.Flags[1] = true;
                         entry.SetValueFromColumn("path", path);
                         //this field does not exist in older agmes
@@ -847,11 +943,12 @@ namespace TotalPorter
                                     CFC.RemoveConditions(outputPath, removeStyleCondition, removeSkillCondition, removePlayerCondition);
 
                                     JObject obj = JObject.Parse(File.ReadAllText(outputPath));
-                                    ArmpEntry hactEntry = outputTalkParam.MainTable.GetAllEntries().FirstOrDefault(x => x.Name.Contains(kv.Value));
+                                    ArmpEntry hactEntry = outputTalkParam.GetMainTable().GetAllEntries().FirstOrDefault(x => x.Name.Contains(kv.Value));
                                     obj["Talk_Param ID"] = hactEntry.ID;
                                     obj["Base HAct"] = kv.Value;
                                     obj["Unk Float"] = 0f;
                                     obj["Completion Flag"] = "Null";
+                                    obj["Special Effect"] = "Null";
 
                                     File.WriteAllText(outputPath, JsonConvert.SerializeObject(obj, Formatting.Indented));
 
@@ -896,12 +993,13 @@ namespace TotalPorter
                 */
             }
 
+
             return output;
         }
 
         private static void ConvertHActs(DirectoryInfo inputHactDir, DirectoryInfo outputHactDir, Game inputGame, Game outputGame, string[] hactsList)
         {
-            if (!ConvertHActFiles)
+            if (!IniSettings.ConvertHActFiles)
                 return;
 
             foreach (string hact in hactsList)
@@ -963,10 +1061,23 @@ namespace TotalPorter
                     continue;
 
                 CMN cmn = CMN.Read(file.FullName, inputGame);
+
                 cmn.AllNodes = RyuseModule.ConvertNodes(cmn.AllNodes, inputGame, outputGame).OutputNodes.ToArray();
                 cmn.GameVersion = CMN.GetVersionForGame(outputGame);
                 CMN.LastHActDEGame = outputGame;
                 CMN.Write(cmn, file.FullName);
+
+                DirectoryInfo resDir = new DirectoryInfo(Path.Combine(file.Directory.FullName, "..", "000"));
+
+                if(resDir.Exists)
+                {
+                    foreach (var binFile in resDir.GetFiles("*.bin"))
+                    {
+                        var res = RES.Read(binFile.FullName, CMN.IsDE(CMN.GetVersionForGame(inputGame)));
+                        res.Version = 1;
+                        RES.Write(res, binFile.FullName, true);
+                    }
+                }
 
                 if (!convertedHActs.Contains(file.FullName))
                     convertedHActs.Add(file.FullName);
@@ -1026,13 +1137,14 @@ namespace TotalPorter
                     {
                         if (pib.Version == PibVersion.LJ)
                         {
-                            foreach (var emitter in pib.Emitters)
+                            if (outputGame == Game.LAD7Gaiden || outputGame >= Game.LADPYIH)
                             {
-                                if (outputGame == Game.LAD7Gaiden)
-                                    (emitter as PibEmitterv58).ToGaidenRevision();
-                                else
-                                    (emitter as PibEmitterv58).ToLJRevision();
+
+                                if (inputGame < Game.LAD7Gaiden || inputGame == Game.LADIW)
+                                    pib.Version = PibVersion.Gaiden;
                             }
+                            else
+                                pib.Version = PibVersion.LJ;
                         }
                     }
 
@@ -1041,10 +1153,10 @@ namespace TotalPorter
                     BasePib newPib = PIB.Convert(pib, GetPibVersionForGame(outputGame));
                     ArmpEntry pibEntry = null;
 
-                    if (targetParticlePuid.MainTable.TryGetEntry(particle.ParticleName, out pibEntry))
+                    if (targetParticlePuid.GetMainTable().TryGetEntry(particle.ParticleName, out pibEntry))
                         newPtcID = pibEntry.ID;
                     else
-                        newPtcID = targetParticlePuid.MainTable.AddEntry(particle.ParticleName).ID;
+                        newPtcID = targetParticlePuid.GetMainTable().AddEntry(particle.ParticleName).ID;
 
                     newPib.ParticleID = newPtcID;
                     particle.ParticleID = newPtcID;
@@ -1101,13 +1213,10 @@ namespace TotalPorter
                     {
                         if (pib.Version == PibVersion.LJ)
                         {
-                            foreach (var emitter in pib.Emitters)
-                            {
-                                if (outputGame == Game.LAD7Gaiden)
-                                    (emitter as PibEmitterv58).ToGaidenRevision();
-                                else
-                                    (emitter as PibEmitterv58).ToLJRevision();
-                            }
+                            if (outputGame == Game.LAD7Gaiden)
+                                pib.Version = PibVersion.Gaiden;
+                            else
+                                pib.Version = PibVersion.LJ;
                         }
                     }
 
@@ -1116,10 +1225,10 @@ namespace TotalPorter
                     BasePib newPib = PIB.Convert(pib, GetPibVersionForGame(outputGame));
                     ArmpEntry pibEntry = null;
 
-                    if (targetParticlePuid.MainTable.TryGetEntry(particle.ParticleName, out pibEntry))
+                    if (targetParticlePuid.GetMainTable().TryGetEntry(particle.ParticleName, out pibEntry))
                         newPtcID = pibEntry.ID;
                     else
-                        newPtcID = targetParticlePuid.MainTable.AddEntry(particle.ParticleName).ID;
+                        newPtcID = targetParticlePuid.GetMainTable().AddEntry(particle.ParticleName).ID;
 
                     newPib.ParticleID = newPtcID;
                     particle.ParticleID = newPtcID;
@@ -1154,8 +1263,6 @@ namespace TotalPorter
 
         private static void ConvertSounds(DirectoryInfo inputSoundFolder, string outputDir, string outputDBDir, ARMP inputSoundDB, ARMP targetSoundDB, Game inputGame, Game outputGame)
         {
-            Dictionary<uint, uint> convertedSounds = new Dictionary<uint, uint>();
-            
             List<uint> cuesheetsToConvert = new List<uint>();
 
             Type specialSoundsOutput = DEElementSE.GetSpecialSoundTypeForGame(outputGame);
@@ -1171,7 +1278,7 @@ namespace TotalPorter
 
                 DEElementSE[] sounds = cmn.AllElements.Where(x => x is DEElementSE).Cast<DEElementSE>().ToArray();
 
-                foreach(DEElementSE sound in  sounds)
+                foreach(DEElementSE sound in sounds)
                 {
                     if (convertedSounds.ContainsKey(sound.CueSheet))
                     {
@@ -1185,7 +1292,7 @@ namespace TotalPorter
                         continue;
                     }
 
-                    ArmpEntry inputEntry = inputSoundDB.MainTable.GetAllEntries().FirstOrDefault(x => (ushort)x.GetValueFromColumn("*cuesheet_id") == sound.CueSheet);
+                    ArmpEntry inputEntry = inputSoundDB.GetMainTable().GetAllEntries().FirstOrDefault(x => (ushort)x.GetValueFromColumn("*cuesheet_id") == sound.CueSheet);
 
                     if(inputEntry == null)
                         continue;
@@ -1195,7 +1302,7 @@ namespace TotalPorter
                     if (string.IsNullOrEmpty(soundName))
                         continue;
 
-                    ArmpEntry outputEntry = targetSoundDB.MainTable.GetAllEntries().FirstOrDefault(x => (string)x.GetValueFromColumn("name") == soundName);
+                    ArmpEntry outputEntry = targetSoundDB.GetMainTable().GetAllEntries().FirstOrDefault(x => (string)x.GetValueFromColumn("name") == soundName);
 
                     if (outputEntry != null)
                     {
@@ -1207,25 +1314,25 @@ namespace TotalPorter
                     else
                     {
 
-                        ArmpEntry mainEntry = targetSoundDB.MainTable.AddEntry("");
+                        ArmpEntry mainEntry = targetSoundDB.GetMainTable().AddEntry("");
                         mainEntry.SetValueFromColumn("name", soundName);
                         mainEntry.SetValueFromColumn("exists", true);
 
 
-                        var ents = targetSoundDB.MainTable.SubTable.GetAllEntries();
+                        var ents = targetSoundDB.GetMainTable().Indexer.GetAllEntries();
                         ArmpEntry lastEntry = ents[ents.Count - 1];
-                        ushort newID = (ushort)((uint)lastEntry.GetValueFromColumn("0") + 1);
+                        ushort newID = (ushort)(ents.Count + 1); //(ushort)((uint)lastEntry.GetValueFromColumn("0") + 1);
                         mainEntry.SetValueFromColumn("*cuesheet_id", newID);
 
 
-                        ArmpEntry subTableEntry = targetSoundDB.MainTable.SubTable.AddEntry(soundName);
+                        ArmpEntry subTableEntry = targetSoundDB.GetMainTable().Indexer.AddEntry(soundName);
                         subTableEntry.SetValueFromColumn("0", newID);
                         subTableEntry.SetValueFromColumn("2", mainEntry.ID);
                         convertedSounds[sound.CueSheet] = newID;
                         sound.CueSheet = newID;
 
                         if (soundName.StartsWith("hact_"))
-                            mainEntry.SetValueFromColumn("category", targetSoundDB.MainTable.GetAllEntries().First(x => ((string)x.GetValueFromColumn("name")).StartsWith("hact")).GetValueFromColumn("category"));
+                            mainEntry.SetValueFromColumn("category", targetSoundDB.GetMainTable().GetAllEntries().First(x => ((string)x.GetValueFromColumn("name")).StartsWith("hact")).GetValueFromColumn("category"));
 
                         FileInfo file = new FileInfo(Path.Combine(inputSoundFolder.FullName, soundName + ".acb"));
 
@@ -1265,6 +1372,46 @@ namespace TotalPorter
             }
 
             return foundFiles.ToArray();
+        }
+
+        public static Dictionary<string, uint> GenerateTalkEntriesForHActs(List<string> hacts, ARMP talkParamArmp, Game inputGame, Game outputGame)
+        {
+            Dictionary<string, uint> newHActIDs = new Dictionary<string, uint>();
+
+            bool outputUsesNumbers = outputGame >= Game.JE;
+
+            ArmpEntry template = talkParamArmp.GetMainTable().GetAllEntries().FirstOrDefault(x => x.GetValueFromColumn<string>("path").Contains("talk_"));
+
+
+            foreach (string str in hacts)
+            {
+                string name = str;
+
+                //???
+                if (outputGame == Game.YK2)
+                    name = "l2_" + name;
+
+                ArmpEntry entry = talkParamArmp.GetMainTable().AddEntry(name);
+                newHActIDs[str] = entry.ID;
+
+                if (!outputUsesNumbers)
+                {
+                    entry.Flags[1] = true;
+                    entry.SetValueFromColumn("relative_play", (byte)1);
+                    entry.SetValueFromColumn("draw_stop_to_play", (byte)1);
+                }
+
+                string templatePath = template.GetValueFromColumn("path").ToString();
+
+                string path = templatePath.Replace(template.Name, "").Replace("talk_", "hact_").Replace("test/", "") + str;
+                path = path.ToLowerInvariant();
+                entry.SetValueFromColumn("path", path);
+
+                if (talkParamArmp.GetMainTable().IsColumnValid("type"))
+                    entry.SetValueFromColumn("type", 9);
+            }
+
+            return newHActIDs;
         }
     }
 }

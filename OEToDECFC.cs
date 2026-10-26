@@ -77,7 +77,7 @@ namespace TotalPorter
             DirectoryInfo targetDbFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("db"));
             DirectoryInfo outputDbFolder = null;
 
-            if (targetDbFolder.Exists)
+            if (targetDbFolder != null)
             {
                 outputDbFolder = new DirectoryInfo(Path.Combine(outputDir, targetDbFolder.Name));
             }
@@ -115,17 +115,28 @@ namespace TotalPorter
 
                 gmtsToConvert = newGmtsToConvert;
 
-                string gmtConverterArgs = $@"-ig {inputGame.ToString().ToLowerInvariant()} -og yk2 -dir -i ""{tempGmtFolder.FullName}"" -o ""{outputGmtFolder.FullName}"" --nosuffix -mtn";
-                Process proc = Process.Start("GMT_Converter.exe", gmtConverterArgs);
-                proc.WaitForExit();
+                string gmtConverterPath = Path.Combine("HActBridge/GMT_Converter.exe");
 
-                if (tempGmtFolder.Exists)
-                    tempGmtFolder.Delete(true);
+                if (File.Exists(gmtConverterPath))
+                {
+                    string gmtConverterArgs = $@"-ig {inputGame.ToString().ToLowerInvariant()} -og yk2 -dir -i ""{tempGmtFolder.FullName}"" -o ""{outputGmtFolder.FullName}"" --nosuffix -mtn";
+                    Process proc = Process.Start(gmtConverterPath, gmtConverterArgs);
+                    proc.WaitForExit();
+
+                    if (tempGmtFolder.Exists)
+                        tempGmtFolder.Delete(true);
+                }
+                else
+                {
+                    Console.WriteLine(gmtConverterPath + "does not exist, cannot create gmts");
+                }
             }
 
             DirectoryInfo inputBattleDir = inputDirs.FirstOrDefault(x => x.Name.StartsWith("fighter"));
-            DirectoryInfo outputBattleDir = new DirectoryInfo(outputDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("battle"));
-            string outputCfcPath;
+            DirectoryInfo targetBattleDir = new DirectoryInfo(targetGameDir).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("battle"));
+            DirectoryInfo outputBattleDir = new DirectoryInfo(Path.Combine(outputDir, "battle"));
+
+            string targetCfcPath;
 
             if (targetPuidDir.Exists)
             {
@@ -168,8 +179,8 @@ namespace TotalPorter
 
                             ArmpEntry bepEntry = null;
 
-                            if (!targetPuidBep.MainTable.TryGetEntry(entry.Name, out bepEntry))
-                                targetPuidBep.MainTable.AddEntry(entry.Name);
+                            if (!targetPuidBep.GetMainTable().TryGetEntry(entry.Name, out bepEntry))
+                                targetPuidBep.GetMainTable().AddEntry(entry.Name);
                         }
                     }
 
@@ -179,10 +190,10 @@ namespace TotalPorter
                         string entryName = Path.GetFileNameWithoutExtension(file.Name);
                         ArmpEntry entry = null;
 
-                        if (targetPuidGmt.MainTable.TryGetEntry(entryName, out entry))
+                        if (targetPuidGmt.GetMainTable().TryGetEntry(entryName, out entry))
                             continue;
 
-                        targetPuidGmt.MainTable.AddEntry(entryName);
+                        targetPuidGmt.GetMainTable().AddEntry(entryName);
                     }
 
                     //only write if we modified anything
@@ -198,16 +209,36 @@ namespace TotalPorter
                 Console.WriteLine("Target game does not have PUID folder. Will not be adding GMTs to PUID");
             }
 
-            if (outputBattleDir != null)
+            if (targetBattleDir != null)
             {
-                DirectoryInfo cfcFolder = new DirectoryInfo(outputBattleDir.FullName).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("Fighter Command"));
+                DirectoryInfo targetCfcFolder = new DirectoryInfo(targetBattleDir.FullName).GetDirectories().FirstOrDefault(x => x.Name.StartsWith("Fighter Command") || x.Name == "cfc");
 
-                string cfcInfPath = Path.Combine(cfcFolder.FullName, "File Information.json");
+                if(targetCfcFolder == null)
+                {
+                    Console.WriteLine("Unpacked Fighter command not found on target dir.");
+                    return;
+                }
+
+                if (!outputBattleDir.Exists)
+                    outputBattleDir.Create();
+
+                DirectoryInfo outputCfcDir = new DirectoryInfo(Path.Combine(outputBattleDir.FullName, targetCfcFolder.Name));
+
+                if (!outputCfcDir.Exists)
+                    outputCfcDir.Create();
+
+                string cfcInfPath = Path.Combine(targetCfcFolder.FullName, "File Information.json");
+                string outCfcInfPath = Path.Combine(outputCfcDir.FullName, "File Information.json");
 
                 JObject fileInf = JObject.Parse(File.ReadAllText(cfcInfPath));
                 JObject sets = (JObject)fileInf["File Specific Info"]["Set Order"];
 
-                outputCfcPath = Path.Combine(cfcFolder.FullName, fileInf["Files Directory"].ToString());
+                targetCfcPath = Path.Combine(targetCfcFolder.FullName, fileInf["Files Directory"].ToString());
+
+                DirectoryInfo outputCfcFilesPath = new DirectoryInfo(Path.Combine(outputCfcDir.FullName, fileInf["Files Directory"].ToString()));
+
+                if (!outputCfcFilesPath.Exists)
+                    outputCfcFilesPath.Create();
 
                 uint highest = 0;
 
@@ -222,12 +253,239 @@ namespace TotalPorter
                     }
                 }
 
+                if (hactsToConvert.Count > 0 && IniSettings.ConvertHActFiles)
+                {
+                    DirectoryInfo inputHactFolder = inputDirs.FirstOrDefault(X => X.Name.StartsWith("hact"));
+                    DirectoryInfo targetHactFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("hact"));
+
+                    if (inputHactFolder != null && targetHactFolder != null)
+                    {
+                        DirectoryInfo outputHactFolder = new DirectoryInfo(Path.Combine(outputDir, targetHactFolder.Name));
+
+                        if (!outputHactFolder.Exists)
+                            outputHactFolder.Create();
+
+                        foreach (string hactName in hactsToConvert)
+                        {
+                            string basePath = Path.Combine(inputHactFolder.FullName, hactName);
+                            string parName = basePath += ".par";
+
+                            string newPath = Path.Combine(outputHactFolder.FullName, hactName);
+
+                            if (Directory.Exists(newPath))
+                                Directory.Delete(newPath, true);
+
+                            if (File.Exists(parName))
+                            {
+                                Utils.ExtractFromPar(parName, newPath);
+                                Console.WriteLine("Extracted " + hactName);
+                            }
+                            else if (Directory.Exists(basePath))
+                            {
+                                Directory.Move(basePath, newPath);
+                                Console.WriteLine("Moved " + hactName);
+                            }
+                            else
+                            {
+                                Console.WriteLine("Couldn't find " + hactName + " will not convert");
+                            }
+
+                            if (Directory.Exists(newPath))
+                            {
+                                foreach (string dir in Directory.GetDirectories(newPath, "*.par", SearchOption.AllDirectories))
+                                {
+                                    string newDir = Path.Combine(newPath, new DirectoryInfo(dir).Name.Replace(".par", ""));
+
+                                    if (Directory.Exists(newDir))
+                                        new DirectoryInfo(newDir).Delete(true);
+
+                                    Directory.Move(dir, newDir);
+                                }
+
+
+                                List<DirectoryInfo> dirsToDelete = new List<DirectoryInfo>();
+
+                                foreach (string dir in Directory.GetDirectories(newPath, "*", SearchOption.AllDirectories))
+                                {
+                                    DirectoryInfo dirinf = new DirectoryInfo(dir);
+
+                                    if (dirinf.Name == dirinf.Parent.Name)
+                                    {
+                                        //gulp nested
+                                        Utils.CopyFilesRecursively(dirinf.FullName, dirinf.Parent.FullName);
+                                        dirsToDelete.Add(dirinf);
+                                    }
+                                }
+
+                                foreach (DirectoryInfo dir in dirsToDelete)
+                                    dir.Delete(true);
+
+                                newHactDirs.Add(newPath);
+                            }
+                        }
+
+                        for (int i = 0; i < newHactDirs.Count; i++)
+                        {
+                            string hactDir = newHactDirs[i];
+                            string dirName = new DirectoryInfo(hactDir).Name;
+
+                            Console.WriteLine("Converting " + dirName + $" ({i + 1} out of {newHactDirs.Count})");
+
+                            string hactBridgeArgs = $@"""{hactDir}"" {HActLib.Internal.Reflection.GetGamePrefixes(inputGame)[0]} {HActLib.Internal.Reflection.GetGamePrefixes(outputGame)[0]}";
+
+                            if (!IniSettings.ConvertPib)
+                                hactBridgeArgs += " -nopibs";
+
+                            var proc = Process.Start("HActBridge/HActBridge.exe", hactBridgeArgs);
+                            proc.WaitForExit();
+
+                            string newDir = Path.Combine(outputHactFolder.FullName, dirName + "_" + CMN.GetVersionForGame(outputGame).ToString().ToLowerInvariant() + "_" + outputGame.ToString().ToLowerInvariant());
+                            /*
+                            if (Directory.Exists(newDir))
+                            {
+                                Directory.Delete(hactDir, true);
+                                Directory.Move(newDir, hactDir);
+                            }*/
+                        }
+
+                        for (int i = 0; i < newHactDirs.Count; i++)
+                        {
+                            string hactDir = newHactDirs[i];
+                            string dirName = new DirectoryInfo(hactDir).Name;
+
+                            string newDir = Path.Combine(outputHactFolder.FullName, dirName + "_" + CMN.GetVersionForGame(outputGame).ToString().ToLowerInvariant() + "_" + outputGame.ToString().ToLowerInvariant());
+                            if (Directory.Exists(newDir))
+                            {
+                                Directory.Delete(hactDir, true);
+                                Directory.Move(newDir, hactDir);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine("Input/target game does not have a hact folder. Will not convert hact files");
+                    }
+                }
+
+                if (hactsToConvert.Count > 0 && IniSettings.ConvertHAct)
+                {
+                    if (inputBattleDir == null || !inputBattleDir.Exists)
+                    {
+                        Console.WriteLine("Could not find input battle directory.");
+                        return;
+                    }
+
+                    if (targetBattleDir == null || !targetBattleDir.Exists)
+                    {
+                        Console.WriteLine("Could not find target battle directory.");
+                        return;
+                    }
+
+                    //todo, create output folder
+                    //instead of appending to target
+
+
+                    DirectoryInfo inputHactChpFolder = inputBattleDir.GetDirectories("*", SearchOption.AllDirectories).FirstOrDefault(x => x.Name.StartsWith("HAct"));
+                    DirectoryInfo targetHactChpFolder = targetBattleDir.GetDirectories("*", SearchOption.AllDirectories).FirstOrDefault(x => x.Name.StartsWith("HAct"));
+
+
+                    if (inputHactChpFolder == null)
+                    {
+                        Console.WriteLine("Could not find input hact chp folder");
+                        return;
+                    }
+
+                    if (targetHactChpFolder == null)
+                    {
+                        Console.WriteLine("Could not find target hact chp folder");
+                        return;
+                    }
+
+                    DirectoryInfo outputHactChpFolder = new DirectoryInfo(Path.Combine(outputDir, targetHactChpFolder.Parent.Name, targetHactChpFolder.Name));
+
+                    if (!outputHactChpFolder.Exists)
+                        outputHactChpFolder.Create();
+
+                    string inputChpPath = Path.Combine(inputHactChpFolder.FullName, "File Information.json");
+                    string targetChpPath = Path.Combine(targetHactChpFolder.FullName, "File Information.json");
+                    string outputChpPath = Path.Combine(outputHactChpFolder.FullName, "File Information.json");
+
+                    string outputChpFilesPath = Path.Combine(outputHactChpFolder.FullName, "Extracted");
+
+                    if (!Directory.Exists(outputChpFilesPath))
+                        Directory.CreateDirectory(outputChpFilesPath);
+
+                    FileInfo talkParamFile = TryFindFile(targetDBDir.FullName, "talk_param.bin");
+
+                    bool outputUsesNumbers = outputGame >= Game.JE;
+
+                    if (File.Exists(inputChpPath) && File.Exists(targetChpPath) && talkParamFile.Exists)
+                    {
+                        JObject inputFileInf = JObject.Parse(File.ReadAllText(inputChpPath));
+                        JObject targetFileInf = JObject.Parse(File.ReadAllText(targetChpPath));
+                        string inputJsonsDirName = inputFileInf["Files Directory"].ToString();
+                        string targetJsonsDirName = targetFileInf["Files Directory"].ToString();
+                        JObject inputSets = (JObject)inputFileInf["File Specific Info"]["Set Order"];
+                        JObject targetSets = (JObject)targetFileInf["File Specific Info"]["Set Order"];
+
+                        DirectoryInfo inputJsonsDir = new DirectoryInfo(Path.Combine(inputHactChpFolder.FullName, inputJsonsDirName));
+                        DirectoryInfo targetJsonsDir = new DirectoryInfo(Path.Combine(targetHactChpFolder.FullName, targetJsonsDirName));
+
+
+                        ARMP talkParamArmp = ArmpFileReader.ReadARMP(talkParamFile.FullName);
+                        newHActIds = Program.GenerateTalkEntriesForHActs(hactsToConvert, talkParamArmp, inputGame, outputGame);
+                        ArmpFileWriter.WriteARMPToFile(talkParamArmp, Path.Combine(outputDbFolder.FullName, "talk_param.bin"));
+
+                        if (inputJsonsDir.Exists)
+                        {
+                            foreach (string str in hactsToConvert)
+                            {
+                                FileInfo chpFile = new FileInfo(Path.Combine(inputJsonsDir.FullName, str + ".json"));
+
+                                if (chpFile.Exists)
+                                {
+                                    string outputName;
+
+                                    if (outputUsesNumbers)
+                                        outputName = newHActIds[str].ToString();
+                                    else
+                                        outputName = str;
+
+                                    string outputPath = Path.Combine(outputChpFilesPath, outputName + ".json");
+                                    chpFile.CopyTo(outputPath, true);
+                                    CFC.RemoveConditions(outputPath, true, true, true);
+                                    //CFC.ConvertToDEFormat(outputPath, inputGame);
+                                    CHP.ConvertToDEFormat(outputPath, newHActIds[str], inputGame);
+                                    CFC.AdjustCFCIDs(outputPath, inputGame, outputGame);
+
+
+                                    copiedChpFiles.Add(outputPath);
+
+                                    Console.WriteLine("Copied CHP HAct " + str + " as " + outputName);
+
+                                    if (!targetSets.ContainsKey(str))
+                                        targetSets[outputName] = "";
+
+                                }
+                            }
+
+                            File.WriteAllText(outputChpPath, JsonConvert.SerializeObject(targetFileInf, Formatting.Indented));
+                        }
+
+                        foreach (string str in copiedChpFiles)
+                        {
+
+                        }
+                    }
+                }
+
                 foreach (string str in convertedSets)
                 {
-                    string newPath = Path.Combine(outputCfcPath, new FileInfo(str).Name);
+                    string newPath = Path.Combine(outputCfcFilesPath.FullName, new FileInfo(str).Name);
                     File.Copy(str, newPath, true);
                     CFC.ConvertToDEFormat(newPath, inputGame);
-                    CFC.AdjustCFCIDs(newPath, outputGame == Game.LADIW);
+                    CFC.AdjustCFCIDs(newPath, inputGame, outputGame);
+                    CFC.AdjustHActStringsToNumbers(newPath, newHActIds);
                     CFC.RemoveConditions(newPath, removeStyleCond, removeSkillCond, removePlayerCond);
 
                     string name = Path.GetFileNameWithoutExtension(newPath);
@@ -242,7 +500,7 @@ namespace TotalPorter
                     }
                 }
 
-                File.WriteAllText(cfcInfPath, JsonConvert.SerializeObject(fileInf, Formatting.Indented));
+                File.WriteAllText(outCfcInfPath, JsonConvert.SerializeObject(fileInf, Formatting.Indented));
 
                 FileInfo commandSetBinPUID = TryFindFile(targetPuidDir.FullName, "battle_command_set.bin");
                 FileInfo commandSetBinDB = TryFindFile(targetDBDir.FullName, "battle_command_set.bin");
@@ -254,13 +512,13 @@ namespace TotalPorter
 
                     foreach (string str in convertedSets)
                     {
-                        commandSetPUIDArmp.MainTable.AddEntry(Path.GetFileNameWithoutExtension(str));
+                        commandSetPUIDArmp.GetMainTable().AddEntry(Path.GetFileNameWithoutExtension(str));
                     }
 
                     foreach (var kv in setMap)
                     {
-                        ArmpEntry mainEntry = commandSetBinDBArmp.MainTable.AddEntry();
-                        ArmpEntry subTableEntry = commandSetBinDBArmp.MainTable.SubTable.AddEntry(kv.Key);
+                        ArmpEntry mainEntry = commandSetBinDBArmp.GetMainTable().AddEntry();
+                        ArmpEntry subTableEntry = commandSetBinDBArmp.GetMainTable().Indexer.AddEntry(kv.Key);
                         subTableEntry.SetValueFromColumn("0", kv.Value);
                         subTableEntry.SetValueFromColumn("2", mainEntry.ID);
                     }
@@ -277,208 +535,6 @@ namespace TotalPorter
             {
                 Console.WriteLine("Output directory does not have battle directory. Will not be adjusting cfcs");
             }
-
-
-            if (hactsToConvert.Count > 0 && Program.ConvertHActFiles)
-            {
-                DirectoryInfo inputHactFolder = inputDirs.FirstOrDefault(X => X.Name.StartsWith("hact"));
-                DirectoryInfo targetHactFolder = targetDirs.FirstOrDefault(x => x.Name.StartsWith("hact"));
-
-                if (inputHactFolder != null && targetHactFolder != null)
-                {
-                    DirectoryInfo outputHactFolder = new DirectoryInfo(Path.Combine(outputDir, targetHactFolder.Name));
-
-                    if (!outputHactFolder.Exists)
-                        outputHactFolder.Create();
-
-                    foreach (string hactName in hactsToConvert)
-                    {
-                        string basePath = Path.Combine(inputHactFolder.FullName, hactName);
-                        string parName = basePath += ".par";
-
-                        string newPath = Path.Combine(outputHactFolder.FullName, hactName);
-
-                        if (Directory.Exists(newPath))
-                            Directory.Delete(newPath, true);
-
-                        if (File.Exists(parName))
-                        {
-                            Utils.ExtractFromPar(parName, newPath);
-                            Console.WriteLine("Extracted " + hactName);
-                        }
-                        else if (Directory.Exists(basePath))
-                        {
-                            Directory.Move(basePath, newPath);
-                            Console.WriteLine("Moved " + hactName);
-                        }
-                        else
-                        {
-                            Console.WriteLine("Couldn't find " + hactName + " will not convert");
-                        }
-
-                        if (Directory.Exists(newPath))
-                        {
-                            foreach (string dir in Directory.GetDirectories(newPath, "*.par", SearchOption.AllDirectories))
-                            {
-                                string newDir = Path.Combine(newPath, new DirectoryInfo(dir).Name.Replace(".par", ""));
-
-                                if (Directory.Exists(newDir))
-                                    new DirectoryInfo(newDir).Delete(true);
-
-                                Directory.Move(dir, newDir);
-                            }
-
-
-                            List<DirectoryInfo> dirsToDelete = new List<DirectoryInfo>();
-
-                            foreach (string dir in Directory.GetDirectories(newPath, "*", SearchOption.AllDirectories))
-                            {
-                                DirectoryInfo dirinf = new DirectoryInfo(dir);
-
-                                if (dirinf.Name == dirinf.Parent.Name)
-                                {
-                                    //gulp nested
-                                    Utils.CopyFilesRecursively(dirinf.FullName, dirinf.Parent.FullName);
-                                    dirsToDelete.Add(dirinf);
-                                }
-                            }
-
-                            foreach (DirectoryInfo dir in dirsToDelete)
-                                dir.Delete(true);
-
-                            newHactDirs.Add(newPath);
-                        }
-                    }
-
-                    for (int i = 0; i < newHactDirs.Count; i++)
-                    {
-                        string hactDir = newHactDirs[i];
-                        string dirName = new DirectoryInfo(hactDir).Name;
-
-                        Console.WriteLine("Converting " + dirName + $" ({i + 1} out of {newHactDirs.Count})");
-
-                        string hactBridgeArgs = $@"""{hactDir}"" {inputGame.ToString().ToLowerInvariant()} {outputGame.ToString().ToLowerInvariant()}";
-
-                        if (!Program.ConvertPib)
-                            hactBridgeArgs += " -nopibs";
-
-                        var proc = Process.Start("HActBridge/HActBridge.exe", hactBridgeArgs);
-                        proc.WaitForExit();
-
-                        string newDir = Path.Combine(outputHactFolder.FullName, dirName + "_" + CMN.GetVersionForGame(outputGame).ToString().ToLowerInvariant() + "_" + outputGame.ToString().ToLowerInvariant());
-                        /*
-                        if (Directory.Exists(newDir))
-                        {
-                            Directory.Delete(hactDir, true);
-                            Directory.Move(newDir, hactDir);
-                        }*/
-                    }
-
-                    for (int i = 0; i < newHactDirs.Count; i++)
-                    {
-                        string hactDir = newHactDirs[i];
-                        string dirName = new DirectoryInfo(hactDir).Name;
-
-                        string newDir = Path.Combine(outputHactFolder.FullName, dirName + "_" + CMN.GetVersionForGame(outputGame).ToString().ToLowerInvariant() + "_" + outputGame.ToString().ToLowerInvariant());
-                        if (Directory.Exists(newDir))
-                        {
-                            Directory.Delete(hactDir, true);
-                            Directory.Move(newDir, hactDir);
-                        }
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("Input/target game does not have a hact folder. Will not convert hact files");
-                }
-            }
-
-            if (hactsToConvert.Count > 0 && Program.ConvertHAct)
-            {
-                DirectoryInfo inputHactChpFolder = inputBattleDir.GetDirectories("*", SearchOption.AllDirectories).FirstOrDefault(x => x.Name.StartsWith("HAct"));
-                DirectoryInfo outputHactChpFolder = outputBattleDir.GetDirectories("*", SearchOption.AllDirectories).FirstOrDefault(x => x.Name.StartsWith("HAct"));
-
-                string inputChpPath = Path.Combine(inputHactChpFolder.FullName, "File Information.json");
-                string outputChpPath = Path.Combine(outputHactChpFolder.FullName, "File Information.json");
-
-                FileInfo talkParamFile = TryFindFile(targetDBDir.FullName, "talk_param.bin");
-
-                bool outputUsesNumbers = outputGame >= Game.JE;
-
-                if (File.Exists(inputChpPath) && File.Exists(outputChpPath) && talkParamFile.Exists)
-                {
-                    JObject inputFileInf = JObject.Parse(File.ReadAllText(inputChpPath));
-                    JObject outputFileInf = JObject.Parse(File.ReadAllText(outputChpPath));
-                    string inputJsonsDirName = inputFileInf["Files Directory"].ToString();
-                    string outputJsonsDirName = outputFileInf["Files Directory"].ToString();
-                    JObject inputSets = (JObject)inputFileInf["File Specific Info"]["Set Order"];
-                    JObject outputSets = (JObject)outputFileInf["File Specific Info"]["Set Order"];
-
-                    DirectoryInfo inputJsonsDir = new DirectoryInfo(Path.Combine(inputHactChpFolder.FullName, inputJsonsDirName));
-                    DirectoryInfo outputJsonsDir = new DirectoryInfo(Path.Combine(outputHactChpFolder.FullName, outputJsonsDirName));
-
-
-                    ARMP talkParamArmp = ArmpFileReader.ReadARMP(talkParamFile.FullName);
-
-                    foreach (string str in hactsToConvert)
-                    {
-                        string name = str;
-
-                        if (outputGame == Game.YK2)
-                            name = "l2_" + name;
-
-                        ArmpEntry entry = talkParamArmp.MainTable.AddEntry(name);
-
-                        if (!outputUsesNumbers)
-                        {
-                            entry.Flags[1] = true;
-                            entry.SetValueFromColumn("relative_play", (byte)1);
-                            entry.SetValueFromColumn("draw_stop_to_play", (byte)1);
-                        }
-
-                        ArmpEntry template = talkParamArmp.MainTable.GetEntry(1);
-                        string path = template.GetValueFromColumn("path").ToString().Replace(template.Name, "").Replace("talk_", "hact_").Replace("test/", "") + str;
-                        entry.SetValueFromColumn("path", path);
-
-                        newHActIds[str] = entry.ID;
-                    }
-
-                    ArmpFileWriter.WriteARMPToFile(talkParamArmp, Path.Combine(outputDbFolder.FullName, "talk_param.bin"));
-
-
-                    if (inputJsonsDir.Exists)
-                    {
-                        foreach (string str in hactsToConvert)
-                        {
-                            FileInfo chpFile = new FileInfo(Path.Combine(inputJsonsDir.FullName, str + ".json"));
-
-                            if (chpFile.Exists)
-                            {
-                                string outputPath = Path.Combine(outputHactChpFolder.FullName, "Extracted", str + ".json");
-                                chpFile.CopyTo(outputPath, true);
-                                CFC.RemoveConditions(outputPath, true, true, true);
-                                //CFC.ConvertToDEFormat(outputPath, inputGame);
-                                CHP.ConvertToDEFormat(outputPath, newHActIds[str], inputGame);
-
-                                copiedChpFiles.Add(outputPath);
-
-                                Console.WriteLine("Copied CHP HAct " + str);
-
-                                if (!outputSets.ContainsKey(str))
-                                    outputSets[str] = "";
-                            }
-                        }
-
-                        File.WriteAllText(outputChpPath, JsonConvert.SerializeObject(outputFileInf, Formatting.Indented));
-                    }
-
-                    foreach (string str in copiedChpFiles)
-                    {
-
-                    }
-                }
-            }
-
         }
 
         private static void PortCFC(string inputGameDir, string inputFile, string targetGameDir, string outputDir, Game inputGame, Game outputGame, bool removeSkillCond, bool removeStyleCond, bool removePlayerCond)
@@ -493,7 +549,7 @@ namespace TotalPorter
 
             DirectoryInfo[] inputDirs = new DirectoryInfo(inputGameDir).GetDirectories();
 
-            if (Program.ConvertMoves)
+            if (IniSettings.ConvertMoves)
             {
                 DirectoryInfo motionFolder = inputDirs.FirstOrDefault(x => x.Name.StartsWith("motion"));
 
@@ -514,7 +570,7 @@ namespace TotalPorter
                 }
             }
 
-            if (Program.ConvertHAct || Program.ConvertHActFiles)
+            if (IniSettings.ConvertHAct || IniSettings.ConvertHActFiles)
             {
                 string[] hacts = CFC.ParseHActs(inputFile);
 
@@ -524,7 +580,7 @@ namespace TotalPorter
 
             convertedSets.Add(inputFile);
 
-            if (Program.Recurse)
+            if (IniSettings.Recurse)
             {
                 string[] deps = CFC.ParseDependingCFCs(inputFile);
 

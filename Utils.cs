@@ -122,6 +122,11 @@ namespace TotalPorter
 
             return null;
         }
+
+        public static string ClearUnpackedPath(string path)
+        {
+            return path.Replace(".par", "").Replace(".unpack", "");
+        }
     }
 }
 

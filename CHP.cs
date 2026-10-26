@@ -102,8 +102,9 @@ namespace TotalPorter
             jobject.Remove("Condition Name");
 
             jobject["Talk_Param ID"] = talkParamID;
-            jobject["Completion Flag"] = "Null";
+            jobject["Completion Flag"] = 0; //when is it 0 and when is it null?
             jobject["Play Area Type"] = 0;
+            jobject["Special Effect"] = "Null";
 
             jobject["X"] = jobject["X?"];
             jobject["Y"] = jobject["Y?"];
@@ -125,7 +126,10 @@ namespace TotalPorter
                 string val = ConvertStateToDE((string)prop.Value, inputGame);
 
                 if (string.IsNullOrEmpty(val))
-                    Console.WriteLine("Don't know how to convert state " + prop.Value);
+                {
+                    val = "Special";
+                    Console.WriteLine("Don't know how to convert state " + prop.Value + " replacing it with placeholder Special");
+                }
 
                 prop.Value.Replace(val);
             }
@@ -139,12 +143,14 @@ namespace TotalPorter
             {
                 default:
                     return "";
+                case "Standup"://idk how to convert
+                    return "Special";
                 case "Heat":
                     return "HeatOrDragon";
                 case "Down":
                     return "Down";
                 case "Drunk":
-                    if (game == HActLib.Game.Y5)
+                    if (game == Game.Y5)
                         return "FromPocket";
                     break;
                 case "DownUtu":
@@ -175,8 +181,6 @@ namespace TotalPorter
                     return "ShakeOff";
                 case "Damage":
                     return "Damage";
-                case "Standup"://idk how to convert
-                    return "Special";
                 case "Dash":
                     if (game == Game.Y5)
                     {
@@ -207,6 +211,9 @@ namespace TotalPorter
 
                 case "Run":
                     return "Run";
+
+                case "Charged":
+                    return "Charged";
             }
 
             return "";
@@ -235,8 +242,9 @@ namespace TotalPorter
 
             }
 
+            //return 0 and earn a free game crash
             if (range > 22)
-                return 0;
+                return 1;
 
             return range;
         }

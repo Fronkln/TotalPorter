@@ -9,6 +9,7 @@ using System.Text.Json.Nodes;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using HActLib;
+using System.Xml.Linq;
 
 namespace TotalPorter
 {
@@ -179,10 +180,76 @@ namespace TotalPorter
         }
 
 
-        public static void AdjustCFCIDs(string cfcFile, bool toIW)
+
+        public static void AdjustCFC(string cfcFile)
         {
             if (!File.Exists(cfcFile))
                 return;
+
+            List<JContainer> tokensToRemove = new List<JContainer>();
+            List<JObject> syncObjsToAdjust = new List<JObject>();
+
+            List<JProperty> statesToConvert = new List<JProperty>();
+
+            void IterateJson(JToken token)
+            {
+                if (token is JObject obj)
+                {
+
+                    // Iterate through each property in the JObject
+                    foreach (var property in obj.Properties())
+                    {
+                        if (property.Name.StartsWith("Move Type"))
+                        {
+                            JObject parent = (JObject)property.Parent;
+                            JObject animTableObj = (JObject)parent["Animation Table"];
+
+                            if (animTableObj != null)
+                            {
+   
+                                    syncObjsToAdjust.Add(animTableObj);
+
+                            }
+                        }
+                        // Recursively iterate if the value is an object or array
+                        IterateJson(property.Value);
+                    }
+                }
+                else if (token is JArray array)
+                {
+                    // Iterate through each element in the JArray
+                    foreach (var item in array)
+                    {
+                        IterateJson(item); // Recursively iterate in case of nested structures
+                    }
+                }
+            }
+
+
+            var jobject = JObject.Parse(File.ReadAllText(cfcFile));
+            IterateJson(jobject);
+
+
+            foreach (var parent in syncObjsToAdjust)
+            {
+                parent["Unknown Value"] = 0;
+            }
+
+            File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
+        }
+
+        public static void AdjustCFCIDs(string cfcFile, Game inputGame, Game outputGame)
+        {
+            if (!File.Exists(cfcFile))
+                return;
+
+            if (outputGame < Game.LADIW && inputGame < Game.LADIW)
+                return;
+
+            if (outputGame > Game.LADIW && inputGame > Game.LADIW)
+                return;
+
+            bool toIWFormat = outputGame >= Game.LADIW;
 
             void IterateJson(JToken token)
             {
@@ -196,7 +263,34 @@ namespace TotalPorter
                         {
                             var objy = (JObject)property.Value;
 
-                            if (toIW)
+                            if (property.Name.Contains("Button"))
+                            {
+                                objy["Unk Value 1"] = 0;
+                                objy["Unk Value 2"] = 0;
+                                objy["Unk Value 3"] = 0;
+                                objy["Unk Value 4"] = 0;
+                            }
+
+                            if (property.Name.EndsWith("Range"))
+                            {
+                                if(inputGame < Game.LADIW && outputGame >= Game.LADIW)
+                                {
+                                    try
+                                    {
+                                        GenericHActRange cond = (GenericHActRange)objy.Value<int>("Unk Byte 1");
+                                         IWHActRange newCond = (IWHActRange)Enum.Parse(typeof(IWHActRange), cond.ToString());
+
+                                        objy["Unk Byte 1"] = (int)newCond;
+                                    }
+                                    catch
+                                    {
+                                        objy["Property Type"] = 0;
+                                    }
+                                }
+
+                            }
+
+                            if (toIWFormat)
                             {
                                 try
                                 {
@@ -298,6 +392,55 @@ namespace TotalPorter
             File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
         }
 
+        public static void AdjustHActStringsToNumbers(string cfcFile, Dictionary<string, uint> hactNumbers)
+        {
+            if (!File.Exists(cfcFile))
+                return;
+
+            List<JToken> hactValues = new();
+
+            void IterateJson(JToken token)
+            {
+                if (token is JObject obj)
+                {
+                    // Iterate through each property in the JObject
+                    foreach (var property in obj.Properties())
+                    {
+
+                        if (property.Name.StartsWith("HAct ID"))
+                        {
+                            var objy = (JValue)property.Value;
+                            hactValues.Add(objy);
+                        }
+                        // Recursively iterate if the value is an object or array
+                        IterateJson(property.Value);
+                    }
+                }
+                else if (token is JArray array)
+                {
+                    // Iterate through each element in the JArray
+                    foreach (var item in array)
+                    {
+                        IterateJson(item); // Recursively iterate in case of nested structures
+                    }
+                }
+            }
+
+
+            var jobject = JObject.Parse(File.ReadAllText(cfcFile));
+            IterateJson(jobject);
+
+            for (int i = 0; i < hactValues.Count; i++)
+            {
+                string value = (string)hactValues[i];
+
+                if (hactNumbers.ContainsKey(value))
+                    hactValues[i].Replace(hactNumbers[value]);
+            }
+
+            File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
+        }
+
         //Convert from string to ID
         public static void AdjustHActIDsToStrings(string cfcFile, Dictionary<uint, string> hactReplaces)
         {
@@ -357,7 +500,7 @@ namespace TotalPorter
             File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
         }
 
-        public static void RemoveConditions(string cfcFile, bool removeStyle, bool removeSkill, bool removePlayer)
+        public static void RemoveConditions(string cfcFile, bool removeStyle, bool removeSkill, bool removePlayer, bool removeLab8 = false)
         {
             if (!removeSkill && !removeStyle && !removePlayer)
                 return;
@@ -375,6 +518,8 @@ namespace TotalPorter
                     // Iterate through each property in the JObject
                     foreach (var property in obj.Properties())
                     {
+                        if(removeLab8 && property.Name.Contains("LAB8"))
+                            tokensToRemove.Add(property); 
 
                         if (property.Name.StartsWith("Condition "))
                         {
@@ -430,8 +575,11 @@ namespace TotalPorter
 
             List<JContainer> tokensToRemove = new List<JContainer>();
             List<JObject> syncObjsToAdjust = new List<JObject>();
+            List<JObject> animTablesToAdjust = new List<JObject>();
 
             List<JProperty> statesToConvert = new List<JProperty>();
+
+
             void IterateJson(JToken token)
             {
                 if (token is JObject obj)
@@ -444,6 +592,32 @@ namespace TotalPorter
                         if (property.Name.StartsWith("State Type"))
                         {
                             statesToConvert.Add(property);
+                        }
+
+
+                        if (property.Name.StartsWith("Animation Table"))
+                        {
+                            if (obj["Move Type"].Value<int>() == 6)
+                                //Remove Yakuza 5/0 style startup anims
+                                //They dont work. They will freeze the player and the victim
+                                animTablesToAdjust.Add(obj);
+
+                            /*
+                            if (property.Last.Value<int>() == 6)
+                            {
+                                if (obj["Animation Used"] != null)
+                                    obj["Animation Used"].Replace("Null");
+                                else
+                                {
+                                    if (obj["Animation Table"] != null)
+                                    {
+                                        obj["Animation Table"] = null;
+                                        obj["Animation Used"] = "Null";
+                                    }
+                                }
+                            }
+                            */
+                           // statesToConvert.Add(property);
                         }
 
                         if (property.Name.StartsWith("Condition "))
@@ -512,13 +686,19 @@ namespace TotalPorter
                         if (property.Name.StartsWith("Move Type"))
                         {
                             JObject parent = (JObject)property.Parent;
-                            JObject animTableObj = (JObject)parent["Animation Table"];
+                            var animTable = parent["Animation Table"];
 
-                            if (animTableObj != null)
+                            //Can be set to just "Null"
+                            if (animTable != null && animTable.Type == JTokenType.Object)
                             {
-                                foreach (var anim in animTableObj)
-                                    syncObjsToAdjust.Add((JObject)anim.Value);
+                                JObject animTableObj = (JObject)animTable;
 
+                                if (animTableObj != null)
+                                {
+                                    foreach (var anim in animTableObj)
+                                        syncObjsToAdjust.Add((JObject)anim.Value);
+
+                                }
                             }
                         }
                         // Recursively iterate if the value is an object or array
@@ -569,13 +749,148 @@ namespace TotalPorter
                 string val = CHP.ConvertStateToDE((string)prop.Value, inputGame);
 
                 if (string.IsNullOrEmpty(val))
-                    Console.WriteLine("Don't know how to convert state " + prop.Value);
+                {
+                    val = "Special";
+                    Console.WriteLine("Don't know how to convert state replacing it with a placeholder one, Special" + prop.Value);
+                }
 
                 prop.Value.Replace(val);
             }
 
+            foreach(JObject obj in animTablesToAdjust)
+            {
+                obj.Remove("Animation Table");
+                obj["Animation Used"] = "Null";
+            }
+
             File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
 
+        }
+
+        public static void ConvertToOEFormat(string cfcFile, Game inputGame)
+        {
+            if (!File.Exists(cfcFile))
+                return;
+
+            List<JContainer> tokensToRemove = new List<JContainer>();
+            List<JObject> syncObjsToAdjust = new List<JObject>();
+            
+            List<JProperty> statesToConvert = new List<JProperty>();
+
+            void IterateJson(JToken token)
+            {
+                if (token is JObject obj)
+                {
+
+                    // Iterate through each property in the JObject
+                    foreach (var property in obj.Properties())
+                    {
+
+                        if (property.Name.StartsWith("State Type"))
+                        {
+                            statesToConvert.Add(property);
+                        }
+
+                        if (property.Name.StartsWith("Condition "))
+                        {
+                            bool isSkill = property.Name.Contains("Skill") || property.Name.Contains("Upgrade");
+                            //beacuse i cant be arsed to convert this yet
+                            bool isMotion = property.Name.Contains("Motion ID");
+
+                            if (isSkill)
+                                tokensToRemove.Add(property);
+
+                            if (property.Name.StartsWith("End Motion ID"))
+                                property.Value.Replace(0);
+
+                            /*
+                            if (property.Name.Contains("| Weapon ID"))
+                            {
+                                JObject objecto = (JObject)property.Last;
+                                objecto["Weapon ID"].Replace(0);
+                            }
+
+
+                            if (property.Name.Contains("| Have Item"))
+                            {
+                                JObject objecto = (JObject)property.Last;
+                                objecto["Item ID"].Replace(0);
+                            }
+
+                            if (property.Name.Contains("| Motion ID"))
+                            {
+                                // property.Value.Replace(0);
+                                //parent["Conditionals"] = "";
+                                tokensToRemove.Add(property);
+                            }
+
+                            if (property.Name.Contains("Ctrl Type"))
+                            {
+                                tokensToRemove.Add(property);
+                            }
+
+                            if (property.Name.Contains("| Range"))
+                            {
+                                JObject rangeObj = (JObject)property.Value;
+                                int range = (int)rangeObj["Unk Byte 1"];
+                                int newRange = CHP.ConvertRangeToDE(range);
+                                rangeObj["Unk Byte 1"].Replace((byte)newRange);
+                            }
+
+                            if (property.Name.Contains("| Weapon Category"))
+                            {
+                                JObject catObj = (JObject)property.Value;
+                                int category = (int)catObj["Weapon Category ID"];
+                                int newCategory = CHP.ConvertAssetCategoryToDE(category);
+                                catObj["Weapon Category ID"].Replace(newCategory);
+                            }
+                            */
+
+                            if (property.Name.Contains("| Target Change"))
+                            {
+                                JObject catObj = (JObject)property.Value;
+                                if ((int)catObj["Target Position"] == 2)
+                                    catObj["Target Position"].Replace(1);
+                            }
+
+                        }
+
+                        if (property.Name.StartsWith("Move Type"))
+                        {
+                            JObject parent = (JObject)property.Parent;
+                            JObject animTableObj = (JObject)parent["Animation Table"];
+
+                            if (animTableObj != null)
+                            {
+                                //foreach (var anim in animTableObj)
+                                    syncObjsToAdjust.Add((JObject)animTableObj);
+
+                            }
+                        }
+                        // Recursively iterate if the value is an object or array
+                        IterateJson(property.Value);
+                    }
+                }
+                else if (token is JArray array)
+                {
+                    // Iterate through each element in the JArray
+                    foreach (var item in array)
+                    {
+                        IterateJson(item); // Recursively iterate in case of nested structures
+                    }
+                }
+            }
+
+            var jobject = JObject.Parse(File.ReadAllText(cfcFile));
+            IterateJson(jobject);
+
+
+            foreach (var parent in syncObjsToAdjust)
+            {
+                parent["Unknown Value"] = 0;
+            }
+
+            File.WriteAllText(cfcFile, JsonConvert.SerializeObject(jobject, Formatting.Indented));
         }
     }
 }
